@@ -1,0 +1,81 @@
+{
+  "name": "maildeno",
+  "version": "1.0.0",
+  "description": "Official JavaScript/TypeScript SDK for the Maildeno render API",
+  "main": "dist/index.js",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "build": "tsup src/index.ts --format cjs,esm --dts --clean",
+    "dev": "tsup src/index.ts --format cjs,esm --dts --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "lint": "eslint src",
+    "lint:fix": "eslint src --fix",
+    "typecheck": "tsc --noEmit",
+    "size": "size-limit",
+    "prepublishOnly": "npm run typecheck && npm run lint && npm run test && npm run build"
+  },
+  "sideEffects": false,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/maildeno/sdk-js.git"
+  },
+  "homepage": "https://github.com/maildeno/sdk-js#readme",
+  "bugs": {
+    "url": "https://github.com/maildeno/sdk-js/issues"
+  },
+  "keywords": [
+    "maildeno",
+    "email",
+    "template",
+    "render",
+    "sdk",
+    "api",
+    "typescript"
+  ],
+  "license": "MIT",
+  "author": {
+    "name": "Maildeno",
+    "url": "https://maildeno.com"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.0.0",
+    "@size-limit/preset-small-lib": "^11.0.0",
+    "@vitest/coverage-v8": "^4.1.5",
+    "eslint": "^9.0.0",
+    "size-limit": "^11.0.0",
+    "tsup": "^8.0.0",
+    "typescript": "^5.4.0",
+    "typescript-eslint": "^8.0.0",
+    "vitest": "^4.1.5"
+  },
+  "size-limit": [
+    {
+      "path": "dist/index.mjs",
+      "limit": "10 KB"
+    }
+  ]
+}
