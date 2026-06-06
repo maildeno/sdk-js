@@ -10,4 +10,5 @@ export type {
   MergeTagGroup,
   MaildenoConfig,
   SdkErrorCode,
+  TemplateJson,
 } from "./types.js";

@@ -8,14 +8,6 @@
 export type RenderTarget = "html" | "react-email" | "mjml";
 
 // ── Dynamic data — all fields optional ───────────────────────────────────────
-//
-// Pass only what you need. Everything defaults to {}.
-//
-// Examples:
-//   {}                                         — no merge tags, no context
-//   { merge_tags: { text: { name: "Noruwa" } } }
-//   { context: { plan: "pro" } }
-//   { merge_tags: { text: {...}, url: {...} }, context: { country: "usa" } }
 
 export interface MergeTagGroup {
   /** Resolved into paragraph / heading / list / button text */
@@ -31,6 +23,19 @@ export interface DynamicData {
   merge_tags?: MergeTagGroup;
   /** Runtime context used for visibility rules (show/hide rows). */
   context?: Record<string, string | number | boolean>;
+}
+
+// ── Template JSON returned by GET /v1/sdk/template/{id} ──────────────────────
+
+export interface TemplateJson {
+  template_id: string;
+  template_name: string;
+  /** Canvas-level settings (global padding, background colour, etc.) */
+  canvas: Record<string, unknown>;
+  /** Ordered list of row definitions */
+  rows: unknown[];
+  /** Schema version — used to guard against breaking changes */
+  schema_version: string;
 }
 
 // ── Render request / response ─────────────────────────────────────────────────
@@ -49,6 +54,12 @@ export interface RenderResult {
   target: RenderTarget;
   /** The rendered output string (HTML, TSX, or MJML). */
   output: string;
+  /**
+   * True when the template was served from a stale cache entry because
+   * the Maildeno server could not be reached. The output is still valid —
+   * this flag exists so callers can log or alert if desired.
+   */
+  fromStaleCache?: boolean;
 }
 
 // ── Client config ─────────────────────────────────────────────────────────────
@@ -74,6 +85,25 @@ export interface MaildenoConfig {
    * @default 30000
    */
   timeout?: number;
+
+  /**
+   * How long a cached template JSON is considered fresh before the SDK
+   * attempts a background re-fetch. In milliseconds.
+   *
+   * After this period the SDK will fetch a fresh copy. If the fetch fails
+   * (server down, network error, timeout) the stale copy is used as a
+   * fallback so rendering continues uninterrupted.
+   *
+   * @default 300000  (5 minutes)
+   */
+  cacheTtl?: number;
+
+  /**
+   * Maximum number of template entries to keep in the in-process cache.
+   * When the limit is reached the oldest entry is evicted.
+   * @default 50
+   */
+  cacheMaxEntries?: number;
 }
 
 // ── Error types ───────────────────────────────────────────────────────────────
@@ -86,7 +116,7 @@ export type SdkErrorCode =
   | "INVALID_API_KEY" // 401 — bad or missing key
   | "FORBIDDEN" // 403 — key lacks scope for the requested target
   | "TEMPLATE_NOT_FOUND" // 404 — templateId not in DB
-  | "RENDER_ERROR" // 422 — SDK builder failed
+  | "RENDER_ERROR" // 422 — render failed
   | "NETWORK_ERROR" // fetch() threw
   | "TIMEOUT" // request exceeded timeout
   | "UNKNOWN";
