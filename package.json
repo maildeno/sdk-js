@@ -20,8 +20,8 @@
     "CHANGELOG.md"
   ],
   "scripts": {
-    "build": "tsup src/index.ts --format cjs,esm --dts --clean",
-    "dev": "tsup src/index.ts --format cjs,esm --dts --watch",
+    "build": "tsup",
+    "dev": "tsup --watch",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
@@ -76,7 +76,16 @@
   "size-limit": [
     {
       "path": "dist/index.mjs",
-      "limit": "20 KB"
+      "limit": "20 KB",
+
+      "ignore": [
+        "node:fs/promises",
+        "node:path",
+        "node:url",
+        "fs/promises",
+        "path",
+        "url"
+      ]
     }
   ]
 }

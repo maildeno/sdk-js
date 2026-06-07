@@ -2,26 +2,11 @@
 //
 // Wasm bridge between the JS SDK and the compiled Rust rendering engine.
 //
-// State
-// ─────
-// Currently INACTIVE — _renderLocally() in client.ts uses a stub while the
-// Wasm engine is being compiled.
-//
-// Activation checklist
-// ────────────────────
-// 1. Run: npm install --save-dev @types/node
-// 2. Copy the compiled engine.wasm into src/ next to this file.
-// 3. In client.ts → _renderLocally(), uncomment the renderTemplate import
-//    and remove the stub block.
-// 4. Delete this activation checklist comment.
-//
 // Memory contract with the Rust engine
 // ─────────────────────────────────────
-// The Wasm module exports four functions:
-//
-//   alloc(len: i32) → i32        allocate `len` bytes, return pointer
-//   dealloc(ptr: i32, len: i32)  free a previously alloc'd region
-//   dealloc_str(ptr: i32)        free a null-terminated result string
+//   alloc(len: i32) → i32          allocate `len` bytes, return pointer
+//   dealloc(ptr: i32, len: i32)    free a previously alloc'd region
+//   dealloc_str(ptr: i32)          free a null-terminated result string
 //   render(ptr: i32, len: i32) → i32
 //       Read `len` bytes of UTF-8 JSON from linear memory at `ptr`,
 //       process, write a null-terminated UTF-8 JSON string elsewhere
@@ -35,19 +20,12 @@
 //   }
 //
 // Output JSON shape (← Rust):
-//   { "output": "...rendered string..." }     on success
-//   { "error":  "...message..." }             on failure
-//
-// The minifier runs in TypeScript AFTER the Wasm call — the engine only
-// needs to produce correct output; compaction is handled by minify.ts.
+//   { "output": "...rendered string..." }   on success
+//   { "error":  "...message..." }           on failure
 
-// NOTE: renderer.ts requires @types/node for fs/promises, path, url.
-// Install when activating: npm install --save-dev @types/node
-// The imports below are commented out until then to keep tsc clean.
-
-// import { readFile } from "node:fs/promises";
-// import { join } from "node:path";
-// import { fileURLToPath } from "node:url";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { MaildenoError } from "./error.js";
 import type { DynamicData, RenderTarget, TemplateJson } from "./types.js";
@@ -67,20 +45,39 @@ let _instance: WebAssembly.Instance | null = null;
 async function getInstance(): Promise<WebAssembly.Instance> {
   if (_instance) return _instance;
 
-  // Uncomment when @types/node is installed and engine.wasm is in src/:
+  // Resolve the directory that contains the *compiled* JS file at runtime.
   //
-  // const dir = fileURLToPath(new URL(".", import.meta.url));
-  // const wasmPath = join(dir, "engine.wasm");
-  // const bytes = await readFile(wasmPath);
-  // const { instance } = await WebAssembly.instantiate(bytes, {});
-  // _instance = instance;
-  // return _instance;
+  // tsup outputs both ESM (index.mjs) and CJS (index.js) into dist/.
+  // engine.wasm is copied into dist/ alongside them by tsup.config.ts.
+  //
+  //   ESM  → import.meta.url is defined, e.g. file:///…/dist/index.mjs
+  //   CJS  → import.meta.url is undefined; use __filename instead
+  //
+  // We detect the format at runtime to get the correct directory in both cases.
+  const dir =
+    typeof __filename !== "undefined"
+      ? // CJS runtime — __filename / __dirname are injected by Node
+        join(__filename, "..")
+      : // ESM runtime — use import.meta.url
+        join(fileURLToPath(import.meta.url), "..");
 
-  throw new MaildenoError(
-    "RENDER_ERROR",
-    "Wasm engine not yet initialised. " +
-      "Run the Rust build, copy engine.wasm to src/, then activate renderer.ts.",
-  );
+  const wasmPath = join(dir, "engine.wasm");
+
+  let bytes: Buffer;
+  try {
+    bytes = await readFile(wasmPath);
+  } catch (cause) {
+    throw new MaildenoError(
+      "RENDER_ERROR",
+      `Could not load engine.wasm from ${wasmPath}. ` +
+        `Make sure engine.wasm is in the same directory as the compiled JS. ` +
+        `Original error: ${cause instanceof Error ? cause.message : String(cause)}`,
+    );
+  }
+
+  const { instance } = await WebAssembly.instantiate(bytes, {});
+  _instance = instance;
+  return _instance;
 }
 
 // ── String helpers ────────────────────────────────────────────────────────────
@@ -106,10 +103,10 @@ function readCString(memory: WebAssembly.Memory, ptr: number): string {
 /**
  * Render a template using the embedded Wasm engine.
  * Returns the raw (un-minified) output string.
- * Minification is applied by the caller (client.ts → _renderLocally).
+ * Minification is applied by the caller (client.ts).
  *
- * @throws {MaildenoError} code "RENDER_ERROR" if the engine reports a failure
- *   or if engine.wasm has not been activated yet.
+ * @throws {MaildenoError} with code "RENDER_ERROR" if the engine reports a
+ *   failure or if engine.wasm cannot be found or loaded.
  */
 export async function renderTemplate(
   template: TemplateJson,

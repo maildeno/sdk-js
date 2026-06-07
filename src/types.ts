@@ -113,10 +113,10 @@ export interface ApiErrorBody {
 }
 
 export type SdkErrorCode =
-  | "INVALID_API_KEY" // 401 — bad or missing key
-  | "FORBIDDEN" // 403 — key lacks scope for the requested target
+  | "INVALID_API_KEY"    // 401 — bad or missing key
+  | "FORBIDDEN"          // 403 — key lacks scope for target, OR plan limit reached
   | "TEMPLATE_NOT_FOUND" // 404 — templateId not in DB
-  | "RENDER_ERROR" // 422 — render failed
-  | "NETWORK_ERROR" // fetch() threw
-  | "TIMEOUT" // request exceeded timeout
+  | "RENDER_ERROR"       // 422 — render failed
+  | "NETWORK_ERROR"      // fetch() threw
+  | "TIMEOUT"            // request exceeded timeout
   | "UNKNOWN";

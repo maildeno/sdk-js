@@ -269,7 +269,12 @@ try {
         // 401 — key is missing, malformed, revoked, or expired
         break
       case "FORBIDDEN":
-        // 403 — key does not have scope for the requested target
+        // 403 — two possible causes, check err.message to distinguish:
+        //   1. Key scope violation — key was created with targets: ["html"]
+        //      but you requested "mjml"
+        //   2. Plan limit reached — your account has hit the render limit
+        //      for your current billing period
+        console.error("Forbidden:", err.message)
         break
       case "TEMPLATE_NOT_FOUND":
         // 404

@@ -2,6 +2,7 @@
 import { TemplateCache } from "./cache.js";
 import { MaildenoError } from "./error.js";
 import { minifyOutput } from "./minify.js";
+import { renderTemplate } from "./renderer.js";
 import type {
   DynamicData,
   MaildenoConfig,
@@ -11,7 +12,7 @@ import type {
   TemplateJson,
 } from "./types.js";
 
-const DEFAULT_BASE_URL = "https://api.maildeno.com";
+const DEFAULT_BASE_URL = "http://localhost:8000"; //"https://api.maildeno.com";
 const DEFAULT_TIMEOUT = 30_000;
 const DEFAULT_CACHE_TTL = 300_000; // 5 minutes
 const DEFAULT_CACHE_MAX = 50;
@@ -212,37 +213,13 @@ export class MaildenoClient {
   /**
    * Invokes the embedded Wasm rendering engine with the template JSON and
    * dynamic data. Returns the raw (un-minified) output string.
-   *
-   * NOTE: This method will be replaced by the Wasm bridge once the engine
-   * binary is compiled. The interface (in/out) stays identical — only the
-   * internals change.
    */
   private async _renderLocally(
     template: TemplateJson,
     target: RenderTarget,
     dynamicData: DynamicData | undefined,
   ): Promise<string> {
-    // ── Wasm bridge ───────────────────────────────────────────────────────
-    //
-    // Uncomment once engine.wasm is compiled and copied into src/:
-    //
-    //   const { renderTemplate } = await import("./renderer.js");
-    //   return renderTemplate(template, target, dynamicData);
-    //
-    // ─────────────────────────────────────────────────────────────────────
-    //
-    // Transition stub — serialises the template + dynamic_data payload that
-    // the Wasm engine will receive. Replace with the import above once the
-    // engine binary is ready. No extra network call is made here.
-
-    void target; // used by Wasm; referenced here to avoid lint warnings
-    void dynamicData; // same
-
-    return JSON.stringify({
-      __wasm_pending: true,
-      template_id: template.template_id,
-      template_name: template.template_name,
-    });
+    return renderTemplate(template, target, dynamicData);
   }
 
   // ── HTTP helpers ────────────────────────────────────────────────────────────
