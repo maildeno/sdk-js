@@ -63,7 +63,6 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.0.0",
-    "@size-limit/preset-small-lib": "^11.0.0",
     "@types/node": "^25.9.2",
     "@vitest/coverage-v8": "^4.1.5",
     "eslint": "^9.0.0",
@@ -71,21 +70,19 @@
     "tsup": "^8.0.0",
     "typescript": "^5.4.0",
     "typescript-eslint": "^8.0.0",
-    "vitest": "^4.1.5"
+    "vitest": "^4.1.5",
+    "@size-limit/file": "^11.0.0"
   },
   "size-limit": [
     {
+      "name": "JS bundle (index.mjs)",
       "path": "dist/index.mjs",
-      "limit": "20 KB",
-
-      "ignore": [
-        "node:fs/promises",
-        "node:path",
-        "node:url",
-        "fs/promises",
-        "path",
-        "url"
-      ]
+      "limit": "20 KB"
+    },
+    {
+      "name": "Wasm engine (engine.wasm)",
+      "path": "dist/engine.wasm",
+      "limit": "150 KB"
     }
   ]
 }
