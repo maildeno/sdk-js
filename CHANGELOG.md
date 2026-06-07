@@ -5,6 +5,74 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [2.1.0] - 2026-06-07
+
+### Added
+
+- **Disk cache strategy.** Set `cache: { type: "disk", path: "..." }` to
+  persist template JSON to the local filesystem. Disk-cached entries survive
+  process restarts and are shared across workers in the same filesystem.
+
+- **`cache` config object.** All cache settings are now unified under a single
+  `cache` key. `type`, `path`, `ttl`, and `maxEntries` live here.
+
+  ```ts
+  // Memory (default — no change required for existing code)
+  new MaildenoClient({ apiKey: "...", cache: { ttl: 300_000 } })
+
+  // Disk
+  new MaildenoClient({
+    apiKey: "...",
+    cache: { type: "disk", path: "/var/cache/maildeno", ttl: 300_000 },
+  })
+  ```
+
+- **`client.listCached()`** — returns the IDs of all templates currently in
+  the cache (memory or disk). Useful for inspection, monitoring, and
+  building admin dashboards.
+
+  ```ts
+  const ids = await client.listCached()
+  // ["550e8400-...", "9ec0c043-..."]
+  ```
+
+- **`client.deleteCached(templateId)`** — removes a single template from the
+  cache. Replaces the old `invalidate()` method with a clearer name. Use this
+  in webhook handlers to propagate template updates immediately.
+
+- **`CacheConfig` type** exported from package root.
+
+### Changed
+
+- `client.clearCache()` is now async (was sync). Awaiting it is required in
+  disk mode; memory mode resolves immediately so existing code that does not
+  `await` will still work in practice, but adding `await` is recommended.
+
+- `client.invalidate(templateId)` is now async and marked `@deprecated`.
+  It delegates to `deleteCached()` internally — existing code continues to
+  work without changes.
+
+### Removed — breaking
+
+- **`cacheTtl` top-level config option** — moved into `cache.ttl`.
+- **`cacheMaxEntries` top-level config option** — moved into `cache.maxEntries`.
+
+### Migration from v2.0
+
+```diff
+  const client = new MaildenoClient({
+    apiKey: "sk_live_...",
+-   cacheTtl:        300_000,
+-   cacheMaxEntries: 50,
++   cache: { ttl: 300_000, maxEntries: 50 },
+  })
+
+- client.invalidate("template-id")
++ await client.deleteCached("template-id")
+```
+
+---
+
 ## [2.0.0] - 2026-06-05
 
 ### Changed — breaking
@@ -24,45 +92,26 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 - **In-process template cache.** Template JSON is cached after the first fetch.
   Subsequent calls to the same `templateId` render with zero network overhead.
 - **Stale-on-error fallback.** If the cache TTL expires and the server cannot
-  be reached (network error, timeout, 5xx), the SDK renders from the last
-  known-good cached copy and sets `result.fromStaleCache = true`. Your email
-  pipeline continues uninterrupted during Maildeno downtime.
-- **`cacheTtl` config option.** Controls how long cached template JSON is
-  considered fresh before a re-fetch is attempted. Default: `300_000` (5 min).
-- **`cacheMaxEntries` config option.** Maximum number of templates held in the
-  in-process cache. Oldest entry evicted when limit is reached. Default: `50`.
-- **`client.invalidate(templateId)`** — immediately evict one template from the
-  in-process cache. Use this after your own code saves a template change so
-  the next render fetches a fresh copy without waiting for TTL expiry.
-- **`client.clearCache()`** — wipe the entire in-process cache.
-- **Output minification.** Rendered HTML, MJML, and React-email output is
-  automatically compacted (whitespace collapsed, blank lines removed) before
-  being returned. CSS inside `<style>` blocks is never corrupted.
-- **`TemplateJson` type** exported from package root — the shape of the raw
-  template payload returned by the API.
+  be reached, the SDK renders from the last known-good cached copy and sets
+  `result.fromStaleCache = true`.
+- **`cacheTtl` config option.** *(deprecated in v2.1 — use `cache.ttl`)*
+- **`cacheMaxEntries` config option.** *(deprecated in v2.1 — use `cache.maxEntries`)*
+- **`client.invalidate(templateId)`** *(deprecated in v2.1 — use `deleteCached()`)*
+- **`client.clearCache()`**
+- **Output minification.**
+- **`TemplateJson` type** exported from package root.
 
 ### Migration from v1
 
 ```diff
-- // v1 — server rendered, dynamic_data sent to Maildeno
-- const result = await client.render({
--   templateId: "...",
--   target: "html",
--   dynamicData: { merge_tags: { text: { name: "Noruwa" } } },
-- })
-
-+ // v2 — local render, same API surface, same result shape
-+ const result = await client.render({
-+   templateId: "...",
-+   target: "html",
-+   dynamicData: { merge_tags: { text: { name: "Noruwa" } } },
-+ })
-+
-+ // Optional: check if rendered from stale cache
-+ if (result.fromStaleCache) logger.warn("Stale cache used", { templateId: "..." })
+- // v1 — server rendered
++ // v2 — local render, same API surface
+  const result = await client.render({
+    templateId: "...",
+    target: "html",
+    dynamicData: { merge_tags: { text: { name: "Noruwa" } } },
+  })
 ```
-
-No changes required to `renderHtml()`, `renderReact()`, or `renderMjml()`.
 
 ---
 

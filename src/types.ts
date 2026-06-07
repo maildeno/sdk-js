@@ -62,6 +62,48 @@ export interface RenderResult {
   fromStaleCache?: boolean;
 }
 
+// ── Cache configuration ───────────────────────────────────────────────────────
+
+export interface CacheConfig {
+  /**
+   * Storage strategy.
+   *
+   * - `"memory"` (default) — in-process Map. Fast, zero I/O, lost on restart.
+   * - `"disk"`   — persistent JSON files on the local filesystem.
+   *                Survives server restarts. The user explicitly opts in and
+   *                is responsible for the path they supply.
+   */
+  type?: "memory" | "disk";
+
+  /**
+   * Directory used when `type: "disk"`.
+   * Created automatically if it does not exist.
+   *
+   * Accepts absolute paths (`/var/cache/maildeno`) or relative ones
+   * (`".maildeno-cache"` — resolved against `process.cwd()`).
+   *
+   * @default ".maildeno-cache"
+   */
+  path?: string;
+
+  /**
+   * How long a cached template is considered fresh (milliseconds).
+   * After this period the SDK attempts a background re-fetch.
+   * If the re-fetch fails the stale copy is returned as a fallback.
+   *
+   * @default 300_000  (5 minutes)
+   */
+  ttl?: number;
+
+  /**
+   * Maximum number of template entries to hold in the cache.
+   * When the limit is reached the oldest entry is evicted.
+   *
+   * @default 50
+   */
+  maxEntries?: number;
+}
+
 // ── Client config ─────────────────────────────────────────────────────────────
 
 export interface MaildenoConfig {
@@ -82,28 +124,21 @@ export interface MaildenoConfig {
 
   /**
    * Request timeout in milliseconds.
-   * @default 30000
+   * @default 30_000
    */
   timeout?: number;
 
   /**
-   * How long a cached template JSON is considered fresh before the SDK
-   * attempts a background re-fetch. In milliseconds.
+   * Cache configuration.
+   * Omit to use memory caching with default settings.
    *
-   * After this period the SDK will fetch a fresh copy. If the fetch fails
-   * (server down, network error, timeout) the stale copy is used as a
-   * fallback so rendering continues uninterrupted.
+   * @example Memory with custom TTL
+   * cache: { ttl: 60_000 }
    *
-   * @default 300000  (5 minutes)
+   * @example Persistent disk cache
+   * cache: { type: "disk", path: "/var/cache/maildeno", ttl: 300_000 }
    */
-  cacheTtl?: number;
-
-  /**
-   * Maximum number of template entries to keep in the in-process cache.
-   * When the limit is reached the oldest entry is evicted.
-   * @default 50
-   */
-  cacheMaxEntries?: number;
+  cache?: CacheConfig;
 }
 
 // ── Error types ───────────────────────────────────────────────────────────────
@@ -113,10 +148,10 @@ export interface ApiErrorBody {
 }
 
 export type SdkErrorCode =
-  | "INVALID_API_KEY"    // 401 — bad or missing key
-  | "FORBIDDEN"          // 403 — key lacks scope for target, OR plan limit reached
+  | "INVALID_API_KEY" // 401 — bad or missing key
+  | "FORBIDDEN" // 403 — key lacks scope for target, OR plan limit reached
   | "TEMPLATE_NOT_FOUND" // 404 — templateId not in DB
-  | "RENDER_ERROR"       // 422 — render failed
-  | "NETWORK_ERROR"      // fetch() threw
-  | "TIMEOUT"            // request exceeded timeout
+  | "RENDER_ERROR" // 422 — render failed
+  | "NETWORK_ERROR" // fetch() threw
+  | "TIMEOUT" // request exceeded timeout
   | "UNKNOWN";

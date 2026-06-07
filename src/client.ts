@@ -1,9 +1,11 @@
 // src/client.ts
-import { TemplateCache } from "./cache.js";
+import { resolve } from "node:path";
+import { TemplateCache, MemoryStore, DiskStore } from "./cache.js";
 import { MaildenoError } from "./error.js";
 import { minifyOutput } from "./minify.js";
 import { renderTemplate } from "./renderer.js";
 import type {
+  CacheConfig,
   DynamicData,
   MaildenoConfig,
   RenderOptions,
@@ -12,30 +14,51 @@ import type {
   TemplateJson,
 } from "./types.js";
 
-const DEFAULT_BASE_URL = "http://localhost:8000"; //"https://api.maildeno.com";
+const DEFAULT_BASE_URL = "http://localhost:8000"; // https://api.maildeno.com change to prod endpoint when published
 const DEFAULT_TIMEOUT = 30_000;
-const DEFAULT_CACHE_TTL = 300_000; // 5 minutes
-const DEFAULT_CACHE_MAX = 50;
+const DEFAULT_TTL = 300_000; // 5 minutes
+const DEFAULT_MAX = 50;
+const DEFAULT_CACHE_PATH = ".maildeno-cache";
 const TEMPLATE_PATH = "/v1/sdk/template";
 
 /**
  * MaildenoClient
  *
- * Fetches template JSON from the Maildeno API, caches it in-process,
- * and renders the final output locally using the embedded Wasm engine.
+ * Fetches template JSON from the Maildeno API, caches it locally
+ * (memory or disk), and renders the output using the embedded Wasm engine.
  *
- * Stale-on-error fallback
- * -----------------------
- * If a cached template has exceeded its TTL the SDK attempts a fresh fetch.
- * If that fetch fails for any reason (server down, network error, timeout)
- * the stale cached copy is used so rendering continues uninterrupted.
- * `result.fromStaleCache` is set to `true` in that case so you can log it.
+ * ## Cache strategies
+ *
+ * ### Memory (default — zero config)
+ * ```ts
+ * const client = new MaildenoClient({ apiKey: "sk_live_..." })
+ * ```
+ *
+ * ### Memory with custom settings
+ * ```ts
+ * const client = new MaildenoClient({
+ *   apiKey: "sk_live_...",
+ *   cache:  { ttl: 60_000, maxEntries: 20 },
+ * })
+ * ```
+ *
+ * ### Disk — survives process restarts
+ * ```ts
+ * const client = new MaildenoClient({
+ *   apiKey: "sk_live_...",
+ *   cache: {
+ *     type: "disk",
+ *     path: "/var/cache/maildeno",  // absolute or relative to cwd
+ *     ttl:  300_000,
+ *   },
+ * })
+ * ```
+ *
+ * ## Stale-on-error fallback
+ * When the TTL expires and the server is unreachable, the last known-good
+ * cached copy is used and `result.fromStaleCache` is set to `true`.
  *
  * @example
- * import { MaildenoClient } from "maildeno"
- *
- * const client = new MaildenoClient({ apiKey: "sk_live_..." })
- *
  * const html = await client.renderHtml("550e8400-e29b-41d4-a716-446655440000", {
  *   merge_tags: { text: { name: "Noruwa" } },
  *   context:    { plan: "pro" },
@@ -54,26 +77,30 @@ export class MaildenoClient {
     this.apiKey = config.apiKey;
     this.baseUrl = (config.baseUrl ?? DEFAULT_BASE_URL).replace(/\/$/, "");
     this.timeout = config.timeout ?? DEFAULT_TIMEOUT;
-    this.cache = new TemplateCache(
-      config.cacheTtl ?? DEFAULT_CACHE_TTL,
-      config.cacheMaxEntries ?? DEFAULT_CACHE_MAX,
-    );
+    this.cache = MaildenoClient._buildCache(config.cache);
   }
 
-  // ── Public API ──────────────────────────────────────────────────────────────
+  private static _buildCache(cfg: CacheConfig | undefined): TemplateCache {
+    const ttl = cfg?.ttl ?? DEFAULT_TTL;
+    const maxEntries = cfg?.maxEntries ?? DEFAULT_MAX;
+
+    if (cfg?.type === "disk") {
+      // resolve() turns relative paths into absolute ones using process.cwd()
+      // so behaviour is predictable regardless of where the file is imported from.
+      const dir = resolve(cfg.path ?? DEFAULT_CACHE_PATH);
+      return new TemplateCache(new DiskStore(dir, ttl, maxEntries));
+    }
+
+    return new TemplateCache(new MemoryStore(ttl, maxEntries));
+  }
+
+  // ── Render ──────────────────────────────────────────────────────────────────
 
   /**
    * Render a template to HTML, React Email TSX, or MJML.
    *
-   * Template JSON is fetched once and cached in-process. Subsequent calls
-   * with the same templateId render from cache with zero network overhead.
-   *
-   * If the cache is stale and the server is unreachable the stale copy is
-   * used automatically — `result.fromStaleCache` will be `true`.
-   *
-   * @param options.templateId   UUID of the template (required)
-   * @param options.target       "html" | "react-email" | "mjml"  (default: "html")
-   * @param options.dynamicData  Merge tags + visibility context (fully optional)
+   * Template JSON is fetched once and cached. Subsequent calls with the same
+   * `templateId` render with zero network overhead until the TTL expires.
    *
    * @throws {MaildenoError}
    */
@@ -85,7 +112,7 @@ export class MaildenoClient {
       target,
     );
 
-    const rawOutput = await this._renderLocally(template, target, dynamicData);
+    const rawOutput = await renderTemplate(template, target, dynamicData);
     const output = minifyOutput(target, rawOutput);
 
     return {
@@ -116,9 +143,7 @@ export class MaildenoClient {
     return output;
   }
 
-  /**
-   * Convenience: render to React Email TSX.
-   */
+  /** Convenience: render to React Email TSX. */
   async renderReact(
     templateId: string,
     dynamicData?: DynamicData,
@@ -131,9 +156,7 @@ export class MaildenoClient {
     return output;
   }
 
-  /**
-   * Convenience: render to MJML.
-   */
+  /** Convenience: render to MJML. */
   async renderMjml(
     templateId: string,
     dynamicData?: DynamicData,
@@ -146,48 +169,63 @@ export class MaildenoClient {
     return output;
   }
 
+  // ── Cache management ────────────────────────────────────────────────────────
+
   /**
-   * Manually invalidate a cached template.
+   * List the IDs of all templates currently held in the cache.
    *
-   * Call this inside your `template.updated` webhook handler so the next
-   * render immediately fetches a fresh copy rather than waiting for TTL.
+   * In memory mode this reads the in-process Map.
+   * In disk mode this reads the cache directory — no file contents are loaded.
    *
    * @example
-   * app.post("/webhooks/maildeno", (req, res) => {
-   *   const { event, template_id } = req.body
-   *   if (event === "template.updated") {
-   *     client.invalidate(template_id)
-   *   }
-   *   res.sendStatus(200)
-   * })
+   * const ids = await client.listCached()
+   * // ["a7f4b181-a366-4944-a371-e7b941a3c5ab", "9ec0c043-..."]
    */
-  invalidate(templateId: string): void {
-    this.cache.invalidate(templateId);
+  async listCached(): Promise<string[]> {
+    return this.cache.list();
   }
 
-  /** Wipe the entire in-process template cache. */
-  clearCache(): void {
-    this.cache.clear();
+  /**
+   * Remove a single template from the cache by ID.
+   *
+   * The next render for this template will fetch a fresh copy from the server
+   * regardless of TTL. Use this when you know a template has changed and
+   * want the update to be visible immediately without waiting for expiry.
+   *
+   * @example
+   * await client.deleteCached("a7f4b181-a366-4944-a371-e7b941a3c5ab")
+   */
+  async deleteCached(templateId: string): Promise<void> {
+    await this.cache.invalidate(templateId);
+  }
+
+  /**
+   * Remove all templates from the cache.
+   *
+   * In memory mode this empties the in-process Map.
+   * In disk mode this deletes all `.json` files in the cache directory —
+   * the directory itself is left intact.
+   */
+  async clearCache(): Promise<void> {
+    await this.cache.clear();
+  }
+
+  /**
+   * @deprecated Use `deleteCached(templateId)` instead.
+   * Delegates to `deleteCached` — existing code continues to work.
+   */
+  async invalidate(templateId: string): Promise<void> {
+    await this.deleteCached(templateId);
   }
 
   // ── Template fetching ───────────────────────────────────────────────────────
 
-  /**
-   * Returns a fresh or stale-fallback template for the given id.
-   *
-   * Priority:
-   *   1. Fresh cache hit      → return immediately, no network
-   *   2. Cache miss or stale  → attempt GET /v1/sdk/template/{id}
-   *      a. Fetch succeeds    → update cache, return fresh template
-   *      b. Fetch fails       → if stale copy exists, return it with
-   *                             fromStaleCache=true; otherwise re-throw
-   */
   private async _getTemplate(
     id: string,
     target: RenderTarget,
   ): Promise<{ template: TemplateJson; fromStaleCache: boolean }> {
-    // 1. Fresh hit
-    const fresh = this.cache.getFresh(id);
+    // 1. Fresh hit — no network needed
+    const fresh = await this.cache.getFresh(id);
     if (fresh) return { template: fresh, fromStaleCache: false };
 
     // 2. Miss or stale — try the network
@@ -195,34 +233,18 @@ export class MaildenoClient {
       const template = await this._get<TemplateJson>(
         `${TEMPLATE_PATH}/${id}?target=${target}`,
       );
-      this.cache.set(id, template);
+      await this.cache.set(id, template);
       return { template, fromStaleCache: false };
     } catch (err) {
-      // 2b. Network failed — try stale fallback
-      const stale = this.cache.getFallback(id);
-      if (stale) {
-        return { template: stale, fromStaleCache: true };
-      }
-      // No fallback available — re-throw the original error
+      // 3. Network failed — use stale copy if we have one
+      const stale = await this.cache.getFallback(id);
+      if (stale) return { template: stale, fromStaleCache: true };
+      // No cached copy at all — re-throw so the caller knows
       throw err;
     }
   }
 
-  // ── Local rendering (Wasm) ──────────────────────────────────────────────────
-
-  /**
-   * Invokes the embedded Wasm rendering engine with the template JSON and
-   * dynamic data. Returns the raw (un-minified) output string.
-   */
-  private async _renderLocally(
-    template: TemplateJson,
-    target: RenderTarget,
-    dynamicData: DynamicData | undefined,
-  ): Promise<string> {
-    return renderTemplate(template, target, dynamicData);
-  }
-
-  // ── HTTP helpers ────────────────────────────────────────────────────────────
+  // ── HTTP ────────────────────────────────────────────────────────────────────
 
   private async _get<T>(path: string): Promise<T> {
     const url = `${this.baseUrl}${path}`;

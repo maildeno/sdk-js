@@ -19,12 +19,10 @@ afterEach(() => {
   mockFetch.mockReset();
 });
 
-// ── Fixtures — factories, not shared instances ────────────────────────────────
+// ── Fixtures ──────────────────────────────────────────────────────────────────
 //
-// IMPORTANT: always use makeTemplateResponse() / makeRenderResponse() rather
-// than a shared Response object. The Fetch API's Response body can only be
-// read once; reusing an instance across mock calls causes "Body already been
-// read" errors.
+// Always use makeTemplateResponse() — the Fetch API Response body can only be
+// read once; reusing an instance across mock calls causes "Body already read".
 
 const BASE_TEMPLATE: TemplateJson = {
   template_id: "t1",
@@ -52,7 +50,6 @@ function networkError(): Promise<never> {
   return Promise.reject(new Error("Failed to fetch"));
 }
 
-// Helper: queue N identical template responses (each a fresh Response instance)
 function queueTemplates(n: number, t: TemplateJson = BASE_TEMPLATE): void {
   for (let i = 0; i < n; i++) {
     mockFetch.mockResolvedValueOnce(makeTemplateResponse(t));
@@ -83,6 +80,30 @@ describe("MaildenoClient constructor", () => {
     await client.renderHtml("t1");
     const [url] = mockFetch.mock.calls[0] as [string];
     expect(url).toContain("https://api.maildeno.com/v1/sdk/template/t1");
+  });
+
+  it("accepts cache config object with memory type", () => {
+    expect(
+      () =>
+        new MaildenoClient({
+          apiKey: "sk_test_" + "a".repeat(64),
+          cache: { type: "memory", ttl: 60_000, maxEntries: 20 },
+        }),
+    ).not.toThrow();
+  });
+
+  it("accepts cache config object with disk type", () => {
+    expect(
+      () =>
+        new MaildenoClient({
+          apiKey: "sk_test_" + "a".repeat(64),
+          cache: {
+            type: "disk",
+            path: "/tmp/maildeno-test-cache",
+            ttl: 60_000,
+          },
+        }),
+    ).not.toThrow();
   });
 });
 
@@ -126,66 +147,98 @@ describe("template fetching", () => {
 describe("in-process cache", () => {
   it("fetches template once and reuses for subsequent renders", async () => {
     const client = new MaildenoClient({ apiKey: "sk_test_" + "a".repeat(64) });
-
-    // Only one template fetch needed — cache handles the rest
     queueTemplates(1);
 
     await client.renderHtml("t1");
     await client.renderHtml("t1");
     await client.renderHtml("t1");
 
-    const templateFetches = mockFetch.mock.calls.filter(([url]: [string]) =>
+    const fetches = mockFetch.mock.calls.filter(([url]: [string]) =>
       url.includes("/v1/sdk/template/"),
     );
-    expect(templateFetches).toHaveLength(1);
+    expect(fetches).toHaveLength(1);
   });
 
   it("re-fetches template after TTL expires", async () => {
     const client = new MaildenoClient({
       apiKey: "sk_test_" + "a".repeat(64),
-      cacheTtl: 1_000,
+      cache: { ttl: 1_000 },
     });
-
-    queueTemplates(2); // first render + re-fetch after TTL
+    queueTemplates(2);
 
     await client.renderHtml("t1");
     vi.advanceTimersByTime(2_000);
     await client.renderHtml("t1");
 
-    const templateFetches = mockFetch.mock.calls.filter(([url]: [string]) =>
+    const fetches = mockFetch.mock.calls.filter(([url]: [string]) =>
       url.includes("/v1/sdk/template/"),
     );
-    expect(templateFetches).toHaveLength(2);
+    expect(fetches).toHaveLength(2);
   });
 
-  it("invalidate() forces a fresh fetch on next render", async () => {
+  it("deleteCached() forces a fresh fetch on next render", async () => {
     const client = new MaildenoClient({ apiKey: "sk_test_" + "a".repeat(64) });
-
-    queueTemplates(2); // initial + post-invalidate
+    queueTemplates(2);
 
     await client.renderHtml("t1");
-    client.invalidate("t1");
+    await client.deleteCached("t1");
     await client.renderHtml("t1");
 
-    const templateFetches = mockFetch.mock.calls.filter(([url]: [string]) =>
+    const fetches = mockFetch.mock.calls.filter(([url]: [string]) =>
       url.includes("/v1/sdk/template/"),
     );
-    expect(templateFetches).toHaveLength(2);
+    expect(fetches).toHaveLength(2);
+  });
+
+  it("invalidate() is an alias for deleteCached()", async () => {
+    const client = new MaildenoClient({ apiKey: "sk_test_" + "a".repeat(64) });
+    queueTemplates(2);
+
+    await client.renderHtml("t1");
+    await client.invalidate("t1");
+    await client.renderHtml("t1");
+
+    const fetches = mockFetch.mock.calls.filter(([url]: [string]) =>
+      url.includes("/v1/sdk/template/"),
+    );
+    expect(fetches).toHaveLength(2);
   });
 
   it("clearCache() forces fresh fetches for all templates", async () => {
     const client = new MaildenoClient({ apiKey: "sk_test_" + "a".repeat(64) });
-
     queueTemplates(2);
 
     await client.renderHtml("t1");
-    client.clearCache();
+    await client.clearCache();
     await client.renderHtml("t1");
 
-    const templateFetches = mockFetch.mock.calls.filter(([url]: [string]) =>
+    const fetches = mockFetch.mock.calls.filter(([url]: [string]) =>
       url.includes("/v1/sdk/template/"),
     );
-    expect(templateFetches).toHaveLength(2);
+    expect(fetches).toHaveLength(2);
+  });
+
+  it("listCached() returns IDs of cached templates", async () => {
+    const client = new MaildenoClient({ apiKey: "sk_test_" + "a".repeat(64) });
+    queueTemplates(1);
+
+    expect(await client.listCached()).toHaveLength(0);
+
+    await client.renderHtml("t1");
+    expect(await client.listCached()).toContain("t1");
+
+    await client.deleteCached("t1");
+    expect(await client.listCached()).not.toContain("t1");
+  });
+
+  it("listCached() is empty after clearCache()", async () => {
+    const client = new MaildenoClient({ apiKey: "sk_test_" + "a".repeat(64) });
+    queueTemplates(2);
+
+    await client.renderHtml("t1");
+    await client.clearCache();
+
+    expect(await client.listCached()).toHaveLength(0);
   });
 });
 
@@ -195,17 +248,12 @@ describe("stale-on-error fallback", () => {
   it("uses stale cache when server is unreachable after TTL", async () => {
     const client = new MaildenoClient({
       apiKey: "sk_test_" + "a".repeat(64),
-      cacheTtl: 1_000,
+      cache: { ttl: 1_000 },
     });
-
-    // First render — populates cache
     queueTemplates(1);
     await client.renderHtml("t1");
 
-    // Advance past TTL
     vi.advanceTimersByTime(2_000);
-
-    // Server is down on re-fetch — stale cache saves the day
     mockFetch.mockReturnValueOnce(networkError());
 
     const result = await client.render({ templateId: "t1", target: "html" });
@@ -216,13 +264,11 @@ describe("stale-on-error fallback", () => {
   it("sets fromStaleCache=true when server returns 5xx after TTL", async () => {
     const client = new MaildenoClient({
       apiKey: "sk_test_" + "a".repeat(64),
-      cacheTtl: 1_000,
+      cache: { ttl: 1_000 },
     });
-
     queueTemplates(1);
     await client.renderHtml("t1");
     vi.advanceTimersByTime(2_000);
-
     mockFetch.mockResolvedValueOnce(makeErrorResponse(500, null));
 
     const result = await client.render({ templateId: "t1" });
@@ -232,14 +278,14 @@ describe("stale-on-error fallback", () => {
   it("sets fromStaleCache=true when server returns 503 after TTL", async () => {
     const client = new MaildenoClient({
       apiKey: "sk_test_" + "a".repeat(64),
-      cacheTtl: 1_000,
+      cache: { ttl: 1_000 },
     });
-
     queueTemplates(1);
     await client.renderHtml("t1");
     vi.advanceTimersByTime(2_000);
-
-    mockFetch.mockResolvedValueOnce(makeErrorResponse(503, "Service Unavailable"));
+    mockFetch.mockResolvedValueOnce(
+      makeErrorResponse(503, "Service Unavailable"),
+    );
 
     const result = await client.render({ templateId: "t1" });
     expect(result.fromStaleCache).toBe(true);
@@ -247,7 +293,6 @@ describe("stale-on-error fallback", () => {
 
   it("throws NETWORK_ERROR when server is down and no prior cache exists", async () => {
     const client = new MaildenoClient({ apiKey: "sk_test_" + "a".repeat(64) });
-
     mockFetch.mockReturnValueOnce(networkError());
 
     const err = await client.renderHtml("brand-new-id").catch((e) => e);
@@ -257,7 +302,6 @@ describe("stale-on-error fallback", () => {
 
   it("fromStaleCache is absent when cache was fresh", async () => {
     const client = new MaildenoClient({ apiKey: "sk_test_" + "a".repeat(64) });
-
     queueTemplates(1);
 
     const result = await client.render({ templateId: "t1" });
@@ -267,19 +311,16 @@ describe("stale-on-error fallback", () => {
   it("recovers from stale state on next successful fetch", async () => {
     const client = new MaildenoClient({
       apiKey: "sk_test_" + "a".repeat(64),
-      cacheTtl: 1_000,
+      cache: { ttl: 1_000 },
     });
-
     queueTemplates(1);
     await client.renderHtml("t1");
 
-    // First re-fetch fails → stale fallback
     vi.advanceTimersByTime(2_000);
     mockFetch.mockReturnValueOnce(networkError());
     const staleResult = await client.render({ templateId: "t1" });
     expect(staleResult.fromStaleCache).toBe(true);
 
-    // Second re-fetch succeeds → fresh again
     vi.advanceTimersByTime(2_000);
     queueTemplates(1);
     const freshResult = await client.render({ templateId: "t1" });
@@ -287,21 +328,19 @@ describe("stale-on-error fallback", () => {
   });
 });
 
-// ── Cache config ──────────────────────────────────────────────────────────────
+// ── Cache configuration ───────────────────────────────────────────────────────
 
 describe("cache configuration", () => {
-  it("respects custom cacheTtl", async () => {
+  it("respects custom ttl in cache config", async () => {
     const client = new MaildenoClient({
       apiKey: "sk_test_" + "a".repeat(64),
-      cacheTtl: 60_000, // 1 minute
+      cache: { ttl: 60_000 },
     });
-
     queueTemplates(1);
     await client.renderHtml("t1");
 
-    // 30 seconds — still fresh, no re-fetch
     vi.advanceTimersByTime(30_000);
-    await client.renderHtml("t1");
+    await client.renderHtml("t1"); // still fresh
 
     const fetches = mockFetch.mock.calls.filter(([url]: [string]) =>
       url.includes("/v1/sdk/template/"),
@@ -309,38 +348,33 @@ describe("cache configuration", () => {
     expect(fetches).toHaveLength(1);
   });
 
-  it("respects cacheMaxEntries by evicting the oldest entry", async () => {
+  it("respects maxEntries in cache config by evicting the oldest entry", async () => {
     const client = new MaildenoClient({
       apiKey: "sk_test_" + "a".repeat(64),
-      cacheMaxEntries: 2,
+      cache: { maxEntries: 2 },
     });
 
-    // Fill cache with t1 and t2
     queueTemplates(1, { ...BASE_TEMPLATE, template_id: "t1" });
     queueTemplates(1, { ...BASE_TEMPLATE, template_id: "t2" });
     await client.renderHtml("t1");
     await client.renderHtml("t2");
 
-    // Adding t3 evicts t1 (oldest)
+    // Adding t3 evicts t1
     queueTemplates(1, { ...BASE_TEMPLATE, template_id: "t3" });
     await client.renderHtml("t3");
 
-    // t1 must be re-fetched (evicted); t2 and t3 still cached
+    // t1 must be re-fetched
     queueTemplates(1, { ...BASE_TEMPLATE, template_id: "t1" });
     await client.renderHtml("t1");
 
     const t1Fetches = mockFetch.mock.calls.filter(([url]: [string]) =>
       url.includes("/v1/sdk/template/t1"),
     );
-    expect(t1Fetches).toHaveLength(2); // initial + after eviction
+    expect(t1Fetches).toHaveLength(2);
   });
 });
 
 // ── Minification ──────────────────────────────────────────────────────────────
-//
-// The Wasm engine is not yet wired — _renderLocally returns a JSON stub.
-// These tests verify the minifier runs on whatever output the render step
-// produces. Full HTML minification is covered by minify.test.ts.
 
 describe("minification applied to render output", () => {
   it("render() returns a non-empty output string", async () => {
@@ -361,7 +395,7 @@ describe("minification applied to render output", () => {
   });
 });
 
-// ── Minify unit tests (pure — no fetch needed) ────────────────────────────────
+// ── Minify unit tests ─────────────────────────────────────────────────────────
 
 describe("minifyOutput (unit)", () => {
   it("collapses inter-tag whitespace in HTML", async () => {
@@ -420,7 +454,10 @@ describe("error handling", () => {
 
   it("throws FORBIDDEN on 403", async () => {
     mockFetch.mockResolvedValueOnce(
-      makeErrorResponse(403, "This API key does not have access to the 'mjml' target."),
+      makeErrorResponse(
+        403,
+        "This API key does not have access to the 'mjml' target.",
+      ),
     );
     const err = await client.renderMjml("t1").catch((e) => e);
     expect(err).toBeInstanceOf(MaildenoError);
@@ -429,7 +466,9 @@ describe("error handling", () => {
   });
 
   it("throws TEMPLATE_NOT_FOUND on 404", async () => {
-    mockFetch.mockResolvedValueOnce(makeErrorResponse(404, "Template not found."));
+    mockFetch.mockResolvedValueOnce(
+      makeErrorResponse(404, "Template not found."),
+    );
     const err = await client.renderHtml("bad-id").catch((e) => e);
     expect(err).toBeInstanceOf(MaildenoError);
     expect(err.code).toBe("TEMPLATE_NOT_FOUND");
