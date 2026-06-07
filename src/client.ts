@@ -14,7 +14,7 @@ import type {
   TemplateJson,
 } from "./types.js";
 
-const DEFAULT_BASE_URL = "http://localhost:8000"; // https://api.maildeno.com change to prod endpoint when published
+const DEFAULT_BASE_URL = "https://api.maildeno.com"; // https://api.maildeno.com change to prod endpoint when published
 const DEFAULT_TIMEOUT = 30_000;
 const DEFAULT_TTL = 300_000; // 5 minutes
 const DEFAULT_MAX = 50;

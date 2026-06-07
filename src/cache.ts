@@ -166,7 +166,7 @@ export class DiskStore implements CacheStore {
     // mid-write never leaves a corrupted cache file.
     const finalPath = this._path(id);
     const tmpPath = `${finalPath}.tmp`;
-    await writeFile(tmpPath, JSON.stringify(entry, null, 2), "utf8");
+    await writeFile(tmpPath, JSON.stringify(entry), "utf8");
 
     const { rename } = await import("node:fs/promises");
     await rename(tmpPath, finalPath);
