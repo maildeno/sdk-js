@@ -11,6 +11,9 @@
 //       Read `len` bytes of UTF-8 JSON from linear memory at `ptr`,
 //       process, write a null-terminated UTF-8 JSON string elsewhere
 //       in linear memory, return its pointer.
+//   heap_peak() → i32
+//       Return the peak heap bytes used since the last render call start.
+//       Used for profiling — safe to call after every render().
 //
 // Input JSON shape  (→ Rust):
 //   {
@@ -38,6 +41,7 @@ interface WasmExports {
   dealloc: (ptr: number, len: number) => void;
   dealloc_str: (ptr: number) => void;
   render: (ptr: number, len: number) => number;
+  heap_peak: () => number;
 }
 
 let _instance: WebAssembly.Instance | null = null;
@@ -131,6 +135,16 @@ export async function renderTemplate(
 
   const resultPtr = exports.render(inputPtr, inputLen);
   exports.dealloc(inputPtr, inputLen);
+
+  // Only log when approaching the heap ceiling (>75% of 12 MB), heap size for template rendering are normally less than 2 MB. Headroom over worst case - 5.5×
+  const peakBytes = exports.heap_peak();
+  if (peakBytes > 9 * 1024 * 1024) {
+    console.warn(
+      `[maildeno-engine] heap usage high: ${(peakBytes / 1024 / 1024).toFixed(2)} MB` +
+        `  target=${target}`,
+    );
+  }
+  // ─────────────────────────────────────────────────────────────────────────
 
   const resultJson = readCString(memory, resultPtr);
   exports.dealloc_str(resultPtr);
