@@ -79,9 +79,10 @@ async function getInstance(): Promise<WebAssembly.Instance> {
     );
   }
 
+  // @ts-expect-error — WebAssembly.instantiate overload resolution incorrect for Buffer input
   const { instance } = await WebAssembly.instantiate(bytes, {});
   _instance = instance;
-  return _instance;
+  return _instance as WebAssembly.Instance;
 }
 
 // ── String helpers ────────────────────────────────────────────────────────────
@@ -139,6 +140,7 @@ export async function renderTemplate(
   // Only log when approaching the heap ceiling (>75% of 12 MB), heap size for template rendering are normally less than 2 MB. Headroom over worst case - 5.5×
   const peakBytes = exports.heap_peak();
   if (peakBytes > 9 * 1024 * 1024) {
+    // eslint-disable-next-line no-console
     console.warn(
       `[maildeno-engine] heap usage high: ${(peakBytes / 1024 / 1024).toFixed(2)} MB` +
         `  target=${target}`,
