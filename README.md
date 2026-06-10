@@ -34,7 +34,6 @@ Fetches template JSON from the Maildeno server, caches it locally (memory or dis
   - [NestJS](#nestjs)
   - [Fastify](#fastify)
 - [TypeScript types](#typescript-types)
-- [Using locally (before publishing)](#using-locally-before-publishing)
 - [Changelog](#changelog)
 
 ---
@@ -816,33 +815,6 @@ import type {
   ValidationIssue,  // { loc, msg, type } — entries on MaildenoError.issues
 } from "maildeno"
 ```
-
----
-
-## Using locally (before publishing)
-
-Build the SDK and link it into your project:
-
-```bash
-# In the SDK directory
-npm run build
-npm link
-
-# In your project
-npm link maildeno
-```
-
-Or use a `file:` path directly in your project's `package.json`:
-
-```json
-{
-  "dependencies": {
-    "maildeno": "file:../path/to/sdk-js"
-  }
-}
-```
-
-Then run `npm install` to pick up the link.
 
 ---
 
