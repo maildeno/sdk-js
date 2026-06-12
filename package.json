@@ -1,6 +1,6 @@
 {
   "name": "maildeno",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "description": "Official JavaScript/TypeScript SDK for the Maildeno template API",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
